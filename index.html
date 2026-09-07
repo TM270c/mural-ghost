@@ -174,6 +174,8 @@ const toastEl = $('toast'), statusEl = $('status');
 let toastT; const toast = (m, ms=4200) => { toastEl.textContent = m; toastEl.hidden = false; clearTimeout(toastT); toastT = setTimeout(()=>toastEl.hidden=true, ms); };
 const setStatus = (m, cls='') => { statusEl.hidden = !m; statusEl.textContent = m || ''; statusEl.className = cls; };
 
+const DBG = { on:false, frames:0, updates:0, feats:'–', self:'–', err:'' , t:null, log:[] };
+const LOG = m => { DBG.log.push(((performance.now()/1000)|0) + 's ' + m); if (DBG.log.length > 14) DBG.log.shift(); };
 // ---------- state ----------
 const S = {
   step: 0,
@@ -261,6 +263,7 @@ function composeMural(){
 
 // ---------- steps ----------
 function showStep(n){
+  LOG('showStep ' + n + (S.freeze ? ' freeze' : ''));
   S.step = n;
   document.querySelectorAll('.step').forEach(el => { const k = +el.dataset.step; el.classList.toggle('on', k===n); el.classList.toggle('done', k<n); });
   $('s1').hidden = n!==1; $('s2').hidden = n!==2; $('s3').hidden = n!==3;
@@ -306,6 +309,7 @@ function layoutVideo(){
   if (S.controller) setupCamera();
 }
 document.addEventListener('visibilitychange', async () => {
+  LOG('visibility ' + document.visibilityState + (S.stream ? (S.stream.active ? ' stream active' : ' stream dead') : ''));
   if (document.visibilityState === 'visible') {
     if (S.video && (S.step===1 || S.step===3)) { if (!S.stream || !S.stream.active) { S.stream = null; await openCamera(); if (S.step===3) { stopTracking(); startTracking(); } } else S.video.play().catch(()=>{}); }
     if (S.step===3) requestWakeLock();
@@ -336,7 +340,7 @@ function makeTiles(){
 }
 let compileGen = 0;
 function compileWall(){
-  const gen = ++compileGen;
+  const gen = ++compileGen; LOG('compile start #' + gen);
   const p = (async () => {
     setCompileUI(0, 'wall');
     const tiles = makeTiles();
@@ -351,13 +355,13 @@ function compileWall(){
     if (gen!==compileGen) return;
     const buf2 = await c2.exportData();
     const m = new MINDAR.IMAGE.Compiler(); const a = m.importData(buf1), b = m.importData(buf2); m.data = [...a, ...b];
-    S.target = m.exportData(); S.tiles = tiles.map(({canvas,...t})=>t); setCompileUI(1, 'done');
+    S.target = m.exportData(); S.tiles = tiles.map(({canvas,...t})=>t); setCompileUI(1, 'done'); LOG('compile done, ' + Math.round(S.target.byteLength/1024) + ' KB');
     idbSet('target', { buf: S.target, tiles: S.tiles, wallLen: S.wall.url.length }).catch(()=>{});
     if (S.step===3) { stopTracking(); startTracking(); }
     return S.target;
   })();
   S.compiling = p;
-  p.catch(e => { toast('Could not learn this wall photo: ' + (e.message||e)); setCompileUI(0,'wall'); });
+  p.catch(e => { LOG('compile ERROR ' + (e.message||e)); toast('Could not learn this wall photo: ' + (e.message||e)); setCompileUI(0,'wall'); });
   return p;
 }
 function setCompileUI(f, phase){
@@ -520,10 +524,12 @@ function setupCamera(){
 }
 let lastSeen = 0;
 async function startTracking(){
+  LOG('startTracking' + (S.tracking ? ' (already)' : '') + (S.freeze ? ' (freeze)' : '') + ' target=' + (S.target ? 'yes' : 'no') + ' tiles=' + (S.tiles ? S.tiles.length : 0));
   if (S.tracking || S.freeze) return;
+  try {
   if (!S.wall || !S.mural) { showStep(S.wall ? 2 : 1); return; }
   const ok = await openCamera(); if (!ok) { S.freeze = true; $('btnFreeze').setAttribute('aria-pressed','true'); showStep(3); return; }
-  if (!S.target) { setStatus('Learning the wall… ' + Math.round(S.compileProgress*100) + '%', 'warn'); try { await S.compiling; } catch(e) { return; } }
+  if (!S.target) { setStatus('Learning the wall… ' + Math.round(S.compileProgress*100) + '%', 'warn'); LOG('waiting for compile'); if (!S.compiling) compileWall(); try { await S.compiling; } catch(e) { LOG('compile failed'); return; } }
   if (S.step!==3 || S.tracking) return;
   initThree(); texture.image = composeMural(); texture.needsUpdate = true; mesh.material.opacity = S.opacity;
   buildAnchors();
@@ -542,21 +548,22 @@ async function startTracking(){
   S.controller.addImageTargetsFromBuffer(S.target);
   setupCamera();
   setStatus('Warming up…', 'warn');
-  try { await S.controller.dummyRun(v); } catch(e) { toast('Tracker failed to start: ' + (e.message||e)); return; }
-  if (S.step!==3) return;
+  try { await S.controller.dummyRun(v); } catch(e) { LOG('dummyRun ERROR ' + (e.message||e)); toast('Tracker failed to start: ' + (e.message||e)); return; }
+  if (S.step!==3) { LOG('left paint during warmup'); return; }
   S.controller.processVideo(v); S.tracking = true;
   setStatus('Looking for the wall…', 'warn');
   const loop = () => { rafId = requestAnimationFrame(loop); renderer.render(scene, camera); };
-  loop();
+  loop(); LOG('tracking running ' + v.videoWidth + 'x' + v.videoHeight);
+  } catch(e) { LOG('startTracking ERROR ' + (e && (e.message||e))); DBG.err = String(e && (e.message||e)); toast('Tracker failed: ' + (e && (e.message||e))); }
 }
 function stopTracking(){
+  if (S.controller) LOG('stopTracking');
   if (S.controller) { try { S.controller.stopProcessVideo(); S.controller.dispose && S.controller.dispose(); } catch(e){} S.controller = null; }
   if (rafId) cancelAnimationFrame(rafId); rafId = null; S.tracking = false;
   anchors.forEach(a => a.visible = false);
   if (renderer) renderer.clear();
 }
 // ---------- diagnostics (tap the title) ----------
-const DBG = { on:false, frames:0, updates:0, feats:'–', self:'–', err:'' , t:null };
 window.addEventListener('unhandledrejection', e => { DBG.err = String(e.reason && (e.reason.message||e.reason)).slice(0,120); toast('Tracker error: ' + DBG.err); });
 window.addEventListener('error', e => { DBG.err = String(e.message).slice(0,120); });
 $('brandTitle').onclick = () => { DBG.on = !DBG.on; $('dbg').hidden = !DBG.on; if (DBG.on) dbgTick(); };
@@ -581,7 +588,8 @@ async function dbgTick(){
     'tracker ' + (c ? c.inputWidth+'×'+c.inputHeight : 'none') + '  targets ' + (S.tiles ? S.tiles.length : 0) + '  learned ' + Math.round(S.compileProgress*100) + '%',
     'frames ' + DBG.frames + ' (' + fps + ' fps)  matrix updates ' + DBG.updates,
     'live features ' + DBG.feats + '   self-test ' + DBG.self,
-    DBG.err ? 'last error: ' + DBG.err : ''
+    DBG.err ? 'last error: ' + DBG.err : '',
+    '— log —', ...DBG.log
   ].join('\n');
   DBG.t = setTimeout(dbgTick, 1500);
 }
@@ -619,7 +627,7 @@ window.addEventListener('orientationchange', () => setTimeout(()=>{ layoutVideo(
       const wi = await loadImg(wallURL); S.wall = { img: wi, w: wi.naturalWidth, h: wi.naturalHeight, url: wallURL };
       if (muralURL) { const mi = await loadImg(muralURL); S.mural = { img: mi, w: mi.naturalWidth, h: mi.naturalHeight, url: muralURL }; }
       if (quad) S.quad = JSON.parse(quad);
-      if (tgt && tgt.buf && tgt.tiles && tgt.wallLen === wallURL.length) { S.target = tgt.buf; S.tiles = tgt.tiles; S.compiling = Promise.resolve(S.target); setCompileUI(1, 'done'); } else compileWall();
+      if (tgt && tgt.buf && tgt.tiles && tgt.wallLen === wallURL.length) { S.target = tgt.buf; S.tiles = tgt.tiles; S.compiling = Promise.resolve(S.target); setCompileUI(1, 'done'); LOG('restored learned wall, ' + tgt.tiles.length + ' targets'); } else { LOG('restored wall photo, relearning'); compileWall(); }
       const n = $('restoreNote'); n.hidden = false; n.innerHTML = 'Your last wall' + (S.mural ? ' and design are' : ' is') + ' still here. ';
       const b = document.createElement('button'); b.className='btn'; b.textContent = S.mural ? 'Continue to Paint' : 'Continue to Align'; b.onclick = () => showStep(S.mural ? 3 : 2); n.appendChild(b);
     } catch(e) { console.warn('restore failed', e); }
