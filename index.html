@@ -78,6 +78,7 @@ input[type=file]{display:none}
 #welcome ol{margin:4px 0 0;padding-left:20px;color:var(--ink);display:flex;flex-direction:column;gap:6px}
 #welcome ol b{color:var(--accent);font-weight:600}
 .small{font-size:12px;color:var(--muted)}
+#dbg{position:fixed;left:10px;bottom:calc(var(--sheet-h) + 24px);z-index:8;font-family:var(--mono);font-size:11px;line-height:1.5;background:rgba(14,15,17,.85);color:var(--ink);padding:8px 10px;border-radius:6px;border:1px solid var(--line);max-width:calc(100% - 20px);white-space:pre-wrap}
 #toast{position:fixed;left:50%;bottom:calc(var(--sheet-h) + 60px);transform:translateX(-50%);z-index:9;background:var(--bad);color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);text-wrap:balance}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 @media (min-width:700px){#sheet{left:50%;right:auto;transform:translateX(-50%);width:560px;bottom:16px;border-radius:12px;border:1px solid var(--line)}.shutter{bottom:calc(var(--sheet-h) + 40px)}}
@@ -107,7 +108,7 @@ input[type=file]{display:none}
 </div>
 
 <div id="top">
-  <div class="brand"><b>Mural Ghost</b><span id="brandNote">wall tracker</span>
+  <div class="brand"><b id="brandTitle">Mural Ghost</b><span id="brandNote">wall tracker</span>
     <div class="right"><button class="btn icon" id="btnReset" title="Start over" aria-label="Start over">↺</button></div></div>
   <div class="steps">
     <div class="step" data-step="1"><i>1</i>Wall<div class="bar" id="compileBar"></div></div>
@@ -118,6 +119,7 @@ input[type=file]{display:none}
 <div id="status" hidden></div>
 <button class="shutter" id="shutter" aria-label="Take wall photo"></button>
 <div id="toast" hidden></div>
+<div id="dbg" hidden></div>
 
 <div id="sheet">
   <!-- step 1 -->
@@ -529,10 +531,12 @@ async function startTracking(){
   S.controller = new MINDAR.IMAGE.Controller({
     inputWidth: v.videoWidth, inputHeight: v.videoHeight, maxTrack:1, warmupTolerance:2, missTolerance:8, filterMinCF:0.0005, filterBeta:0.02,
     onUpdate: d => {
+      if (d.type==='processDone') { DBG.frames++; return; }
       if (d.type!=='updateMatrix') return;
+      DBG.updates++;
       const g = anchors[d.targetIndex]; if (!g) return;
       if (d.worldMatrix) { g.matrix.fromArray(d.worldMatrix); g.visible = true; lastSeen = performance.now(); setStatus((S.locked ? 'Locked' : 'Tracking') + (d.targetIndex ? ' · close-up' : ' · whole wall'), 'good'); }
-      else { g.visible = false; if (!anchors.some(a => a.visible)) setStatus(S.tiles.length>1 ? 'Looking for the wall…' : 'Looking for the wall — step back so more of it is in view', 'bad'); }
+      else { g.visible = false; if (!anchors.some(a => a.visible)) setStatus('Looking for the wall — stand where you took the photo', 'bad'); }
     }
   });
   S.controller.addImageTargetsFromBuffer(S.target);
@@ -550,6 +554,36 @@ function stopTracking(){
   if (rafId) cancelAnimationFrame(rafId); rafId = null; S.tracking = false;
   anchors.forEach(a => a.visible = false);
   if (renderer) renderer.clear();
+}
+// ---------- diagnostics (tap the title) ----------
+const DBG = { on:false, frames:0, updates:0, feats:'–', self:'–', err:'' , t:null };
+window.addEventListener('unhandledrejection', e => { DBG.err = String(e.reason && (e.reason.message||e.reason)).slice(0,120); toast('Tracker error: ' + DBG.err); });
+window.addEventListener('error', e => { DBG.err = String(e.message).slice(0,120); });
+$('brandTitle').onclick = () => { DBG.on = !DBG.on; $('dbg').hidden = !DBG.on; if (DBG.on) dbgTick(); };
+let dbgLastFrames = 0, dbgLastT = performance.now();
+async function dbgTick(){
+  if (!DBG.on) return;
+  const v = S.video, c = S.controller;
+  const now = performance.now(), fps = ((DBG.frames - dbgLastFrames) / ((now - dbgLastT)/1000)).toFixed(1); dbgLastFrames = DBG.frames; dbgLastT = now;
+  if (c && v && S.step===3 && !S.freeze) {
+    try { const d = await c.detect(v); DBG.feats = d.featurePoints.length; } catch(e) { DBG.feats = 'err ' + (e.message||e); }
+    if (DBG.self === '–' && S.wall) {
+      try {
+        const cv = document.createElement('canvas'); cv.width = c.inputWidth; cv.height = c.inputHeight; const x = cv.getContext('2d'); x.fillStyle='#000'; x.fillRect(0,0,cv.width,cv.height);
+        const sc = Math.min(cv.width/S.wall.w, cv.height/S.wall.h); x.drawImage(S.wall.img, (cv.width-S.wall.w*sc)/2, (cv.height-S.wall.h*sc)/2, S.wall.w*sc, S.wall.h*sc);
+        const d = await c.detect(cv); const m = await c.match(d.featurePoints, 0);
+        DBG.self = (m.modelViewTransform ? 'MATCH' : 'no match') + ' (' + d.featurePoints.length + ' pts)';
+      } catch(e) { DBG.self = 'err ' + (e.message||e); }
+    }
+  }
+  $('dbg').textContent = [
+    'video ' + (v ? v.videoWidth+'×'+v.videoHeight + (v.paused?' PAUSED':'') : 'none') + '  screen ' + stage.clientWidth+'×'+stage.clientHeight,
+    'tracker ' + (c ? c.inputWidth+'×'+c.inputHeight : 'none') + '  targets ' + (S.tiles ? S.tiles.length : 0) + '  learned ' + Math.round(S.compileProgress*100) + '%',
+    'frames ' + DBG.frames + ' (' + fps + ' fps)  matrix updates ' + DBG.updates,
+    'live features ' + DBG.feats + '   self-test ' + DBG.self,
+    DBG.err ? 'last error: ' + DBG.err : ''
+  ].join('\n');
+  DBG.t = setTimeout(dbgTick, 1500);
 }
 let wakeLock = null;
 async function requestWakeLock(){ try { if ('wakeLock' in navigator && document.visibilityState==='visible') wakeLock = await navigator.wakeLock.request('screen'); } catch(e){} }
