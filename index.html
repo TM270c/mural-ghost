@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0E0F11">
 <title>Mural Ghost</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -302,6 +302,7 @@ async function openCamera(){
 }
 function layoutVideo(){
   const v = S.video; if (!v || !v.videoWidth) return;
+  v.width = v.videoWidth; v.height = v.videoHeight;   // MindAR copies frames using these attributes
   const W = stage.clientWidth, H = stage.clientHeight;
   const va = v.videoWidth / v.videoHeight, ca = W / H;
   let vw, vh; if (va > ca) { vh = H; vw = H*va; } else { vw = W; vh = W/va; }
@@ -327,16 +328,17 @@ async function setWall(rec, {resnap=false} = {}){
 }
 async function snapWall(){
   const v = S.video; if (!v || !v.videoWidth) return;
-  const s = Math.min(1, 960 / Math.max(v.videoWidth, v.videoHeight));
-  const c = document.createElement('canvas'); c.width = Math.round(v.videoWidth*s); c.height = Math.round(v.videoHeight*s);
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;   // native: the tracker only matches the wall at this size or smaller
   c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
   await setWall(await canvasToRec(c), { resnap: !!S.mural });
 }
 // Tiles: the full wall plus four overlapping quadrants, so tracking survives close-ups.
 function makeTiles(){
-  const { img, w, h } = S.wall, f = 0.62, tiles = [{ ox:0, oy:0, w, h }];
-  for (const [fx,fy] of [[0,0],[1,0],[0,1],[1,1]]) tiles.push({ ox: Math.round(fx*(1-f)*w), oy: Math.round(fy*(1-f)*h), w: Math.round(f*w), h: Math.round(f*h) });
-  return tiles.map(t => { const c = document.createElement('canvas'); c.width = t.w; c.height = t.h; c.getContext('2d').drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, t.w, t.h); return { ...t, canvas: c }; });
+  // s = how much larger the learned copy is than the photo. The matcher only finds a target that appears at the learned
+  // size or smaller, so a 2x crop keeps matching until you are twice as close as where the photo was taken.
+  const { img, w, h } = S.wall, f = 0.62, tiles = [{ ox:0, oy:0, w, h, s:1 }];
+  for (const [fx,fy] of [[0,0],[1,0],[0,1],[1,1]]) tiles.push({ ox: Math.round(fx*(1-f)*w), oy: Math.round(fy*(1-f)*h), w: Math.round(f*w), h: Math.round(f*h), s:2 });
+  return tiles.map(t => { const c = document.createElement('canvas'); c.width = t.w*t.s; c.height = t.h*t.s; const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, c.width, c.height); return { ...t, canvas: c }; });
 }
 let compileGen = 0;
 function compileWall(){
@@ -504,7 +506,8 @@ function updateMesh(){
   if (!S.quad || !S.wall || !anchors.length) return;
   anchors.forEach((g, i) => {
     const t = S.tiles[i];
-    const Hm = homography(S.quad.map(([x,y]) => [x - t.ox, t.h - (y - t.oy)]));   // tile coords: y up, origin bottom-left of the tile
+    const k = t.s || 1;
+    const Hm = homography(S.quad.map(([x,y]) => [(x - t.ox)*k, (t.h - (y - t.oy))*k]));   // learned-target pixels: y up, origin bottom-left of the tile
     const geo = g.children[0].geometry, pos = geo.attributes.position, uv = geo.attributes.uv;
     for (let k=0;k<pos.count;k++){ const u = uv.getX(k), v = 1 - uv.getY(k); const [x,y] = Hm(u,v); pos.setXYZ(k, x, y, 0); }
     pos.needsUpdate = true;
@@ -542,7 +545,7 @@ async function startTracking(){
       DBG.updates++;
       const g = anchors[d.targetIndex]; if (!g) return;
       if (d.worldMatrix) { g.matrix.fromArray(d.worldMatrix); g.visible = true; lastSeen = performance.now(); setStatus((S.locked ? 'Locked' : 'Tracking') + (d.targetIndex ? ' · close-up' : ' · whole wall'), 'good'); }
-      else { g.visible = false; if (!anchors.some(a => a.visible)) setStatus('Looking for the wall — stand where you took the photo', 'bad'); }
+      else { g.visible = false; if (!anchors.some(a => a.visible)) setStatus('Looking for the wall — stand at or behind the spot you took the photo from', 'bad'); }
     }
   });
   S.controller.addImageTargetsFromBuffer(S.target);
@@ -577,7 +580,7 @@ async function dbgTick(){
     if (DBG.self === '–' && S.wall) {
       try {
         const cv = document.createElement('canvas'); cv.width = c.inputWidth; cv.height = c.inputHeight; const x = cv.getContext('2d'); x.fillStyle='#000'; x.fillRect(0,0,cv.width,cv.height);
-        const sc = Math.min(cv.width/S.wall.w, cv.height/S.wall.h); x.drawImage(S.wall.img, (cv.width-S.wall.w*sc)/2, (cv.height-S.wall.h*sc)/2, S.wall.w*sc, S.wall.h*sc);
+        x.drawImage(S.wall.img, (cv.width-S.wall.w)/2, (cv.height-S.wall.h)/2, S.wall.w, S.wall.h);
         const d = await c.detect(cv); const m = await c.match(d.featurePoints, 0);
         DBG.self = (m.modelViewTransform ? 'MATCH' : 'no match') + ' (' + d.featurePoints.length + ' pts)';
       } catch(e) { DBG.self = 'err ' + (e.message||e); }
@@ -599,7 +602,7 @@ async function requestWakeLock(){ try { if ('wakeLock' in navigator && document.
 // ---------- wiring ----------
 $('btnStartCam').onclick = async () => { showStep(1); if (await openCamera()) showStep(1); };
 $('btnPickWall').onclick = $('btnPickWall2').onclick = () => $('fileWall').click();
-$('fileWall').onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value=''; try { await setWall(await fileToImage(f, 960), { resnap: !!S.mural }); } catch(err) { toast('Could not read that photo.'); } };
+$('fileWall').onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value=''; try { await setWall(await fileToImage(f, S.video && S.video.videoWidth ? Math.max(S.video.videoWidth, S.video.videoHeight) : 1280), { resnap: !!S.mural }); } catch(err) { toast('Could not read that photo.'); } };
 $('shutter').onclick = snapWall;
 $('btnPickMural').onclick = () => $('fileMural').click();
 $('fileMural').onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value='';
@@ -627,7 +630,7 @@ window.addEventListener('orientationchange', () => setTimeout(()=>{ layoutVideo(
       const wi = await loadImg(wallURL); S.wall = { img: wi, w: wi.naturalWidth, h: wi.naturalHeight, url: wallURL };
       if (muralURL) { const mi = await loadImg(muralURL); S.mural = { img: mi, w: mi.naturalWidth, h: mi.naturalHeight, url: muralURL }; }
       if (quad) S.quad = JSON.parse(quad);
-      if (tgt && tgt.buf && tgt.tiles && tgt.wallLen === wallURL.length) { S.target = tgt.buf; S.tiles = tgt.tiles; S.compiling = Promise.resolve(S.target); setCompileUI(1, 'done'); LOG('restored learned wall, ' + tgt.tiles.length + ' targets'); } else { LOG('restored wall photo, relearning'); compileWall(); }
+      if (tgt && tgt.buf && tgt.tiles && tgt.tiles[0] && tgt.tiles[0].s && tgt.wallLen === wallURL.length) { S.target = tgt.buf; S.tiles = tgt.tiles; S.compiling = Promise.resolve(S.target); setCompileUI(1, 'done'); LOG('restored learned wall, ' + tgt.tiles.length + ' targets'); } else { LOG('restored wall photo, relearning'); compileWall(); }
       const n = $('restoreNote'); n.hidden = false; n.innerHTML = 'Your last wall' + (S.mural ? ' and design are' : ' is') + ' still here. ';
       const b = document.createElement('button'); b.className='btn'; b.textContent = S.mural ? 'Continue to Paint' : 'Continue to Align'; b.onclick = () => showStep(S.mural ? 3 : 2); n.appendChild(b);
     } catch(e) { console.warn('restore failed', e); }
