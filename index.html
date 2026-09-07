@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0E0F11">
+<title>Mural Ghost</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#0E0F11; --panel:rgba(18,20,24,.86); --panel-solid:#15171B; --line:rgba(237,234,227,.14);
+  --ink:#EDEAE3; --muted:#8F949C; --accent:#F2B33D; --accent-ink:#1A1300; --good:#5CC489; --bad:#E0654F;
+  --ui:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sheet-h:112px;
+}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font:15px/1.35 var(--ui);overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#stage{position:fixed;inset:0;background:var(--ground);overflow:hidden;touch-action:none}
+#stage video{position:absolute;object-fit:fill;background:#000}
+#three{position:absolute;left:0;top:0;pointer-events:none}
+#align{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+[hidden]{display:none!important}
+
+/* top strip */
+#top{position:fixed;left:0;right:0;top:0;z-index:5;padding:max(10px,env(safe-area-inset-top)) 12px 10px;background:linear-gradient(rgba(14,15,17,.9),rgba(14,15,17,0));display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#top > *{pointer-events:auto}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand b{font-weight:600;letter-spacing:.02em;font-size:16px}
+.brand span{color:var(--muted);font-size:13px}
+.brand .right{margin-left:auto;display:flex;gap:6px}
+.steps{display:flex;gap:6px}
+.step{flex:1;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:13px;letter-spacing:.04em;text-transform:uppercase;position:relative;overflow:hidden}
+.step i{font-style:normal;font-family:var(--mono);font-size:12px;width:16px;height:16px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center}
+.step.done{color:var(--ink)}
+.step.done i{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.step.on{color:var(--accent);border-color:var(--accent)}
+.step .bar{position:absolute;left:0;bottom:0;height:2px;background:var(--accent);width:0;transition:width .3s}
+
+/* status pill */
+#status{position:fixed;left:50%;transform:translateX(-50%);top:calc(max(10px,env(safe-area-inset-top)) + 92px);z-index:5;padding:6px 12px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px;letter-spacing:.03em;display:flex;align-items:center;gap:8px;max-width:calc(100% - 32px)}
+#status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+#status.good::before{background:var(--good);box-shadow:0 0 8px var(--good)}
+#status.bad::before{background:var(--bad)}
+#status.warn::before{background:var(--accent)}
+
+/* bottom sheet */
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:12px 14px max(14px,env(safe-area-inset-bottom));background:var(--panel);border-top:1px solid var(--line);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);display:flex;flex-direction:column;gap:10px}
+.row{display:flex;align-items:center;gap:10px}
+#s3 .row,#s2 .row{flex-wrap:wrap}
+.row.wrap{flex-wrap:wrap}
+.hint{color:var(--muted);font-size:13px;text-wrap:balance}
+.btn{padding:11px 14px;border-radius:8px;background:rgba(237,234,227,.08);border:1px solid var(--line);font-weight:500;letter-spacing:.02em;white-space:nowrap;min-height:44px;display:inline-flex;align-items:center;gap:8px}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.primary:disabled{opacity:.45;cursor:default}
+.btn.toggle[aria-pressed="true"]{background:rgba(242,179,61,.18);border-color:var(--accent);color:var(--accent)}
+.btn.icon{padding:10px;min-width:44px;justify-content:center}
+.grow{flex:1}
+.shutter{position:fixed;left:50%;bottom:calc(var(--sheet-h) + max(14px,env(safe-area-inset-bottom)));transform:translateX(-50%);z-index:6;width:76px;height:76px;border-radius:50%;background:var(--accent);border:5px solid rgba(14,15,17,.6);box-shadow:0 0 0 3px var(--accent);display:none}
+.shutter:active{transform:translateX(-50%) scale(.94)}
+.slider{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.slider label{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);flex:none}
+.slider output{font-family:var(--mono);font-size:13px;width:38px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+input[type=range]{flex:1;min-width:0;-webkit-appearance:none;appearance:none;height:34px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:rgba(237,234,227,.22)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:28px;height:28px;border-radius:50%;background:var(--accent);margin-top:-12px;border:3px solid var(--ground)}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:rgba(237,234,227,.22)}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--accent);border:3px solid var(--ground)}
+input[type=file]{display:none}
+
+/* welcome card (step 1 before camera) */
+#welcome{position:absolute;inset:0;display:grid;place-items:center;padding:24px}
+#welcome .card{max-width:420px;background:var(--panel-solid);border:1px solid var(--line);border-radius:12px;padding:22px 22px 18px;display:flex;flex-direction:column;gap:12px}
+#welcome h1{margin:0;font-size:26px;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
+#welcome p{margin:0;color:var(--muted);max-width:62ch}
+#welcome ol{margin:4px 0 0;padding-left:20px;color:var(--ink);display:flex;flex-direction:column;gap:6px}
+#welcome ol b{color:var(--accent);font-weight:600}
+.small{font-size:12px;color:var(--muted)}
+#toast{position:fixed;left:50%;bottom:calc(var(--sheet-h) + 60px);transform:translateX(-50%);z-index:9;background:var(--bad);color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);text-wrap:balance}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (min-width:700px){#sheet{left:50%;right:auto;transform:translateX(-50%);width:560px;bottom:16px;border-radius:12px;border:1px solid var(--line)}.shutter{bottom:calc(var(--sheet-h) + 40px)}}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="three"></canvas>
+  <canvas id="align" hidden></canvas>
+  <div id="welcome">
+    <div class="card">
+      <h1>Ghost your mural onto the wall.</h1>
+      <p>Photograph the wall, drop your design over the photo, then point the phone at the wall and the design floats on it at whatever opacity you like.</p>
+      <ol>
+        <li><b>Wall</b> — stand where you'll paint from and snap the whole area with some edges around it.</li>
+        <li><b>Align</b> — drag, pinch and pull the corners of your design until it sits on the wall.</li>
+        <li><b>Paint</b> — the phone tracks the wall, and keeps tracking close up because it also learns four close-up crops of your photo.</li>
+      </ol>
+      <div class="row wrap" style="margin-top:6px">
+        <button class="btn primary" id="btnStartCam">Open camera</button>
+        <button class="btn" id="btnPickWall2">Use a photo of the wall</button>
+      </div>
+      <div class="small" id="restoreNote" hidden></div>
+    </div>
+  </div>
+</div>
+
+<div id="top">
+  <div class="brand"><b>Mural Ghost</b><span id="brandNote">wall tracker</span>
+    <div class="right"><button class="btn icon" id="btnReset" title="Start over" aria-label="Start over">↺</button></div></div>
+  <div class="steps">
+    <div class="step" data-step="1"><i>1</i>Wall<div class="bar" id="compileBar"></div></div>
+    <div class="step" data-step="2"><i>2</i>Align</div>
+    <div class="step" data-step="3"><i>3</i>Paint</div>
+  </div>
+</div>
+<div id="status" hidden></div>
+<button class="shutter" id="shutter" aria-label="Take wall photo"></button>
+<div id="toast" hidden></div>
+
+<div id="sheet">
+  <!-- step 1 -->
+  <div id="s1">
+    <div class="row">
+      <div class="hint grow">Frame the whole area you'll paint, plus a margin of wall around it. Even light, no glare. Then tap the shutter.</div>
+      <button class="btn" id="btnPickWall">Photo instead</button>
+    </div>
+  </div>
+  <!-- step 2 -->
+  <div id="s2" hidden>
+    <div class="row">
+      <button class="btn primary" id="btnPickMural">Choose design</button>
+      <div class="slider"><label for="op2">Opacity</label><input type="range" id="op2" min="5" max="100" value="50"><output id="op2v">50%</output></div>
+    </div>
+    <div class="row">
+      <button class="btn toggle" id="btnGrid2" aria-pressed="false">Grid</button>
+      <button class="btn toggle" id="btnLines2" aria-pressed="false">Lines</button>
+      <button class="btn" id="btnFit">Fit</button>
+      <div class="grow"></div>
+      <button class="btn primary" id="btnToPaint" disabled>Paint →</button>
+    </div>
+    <div class="hint" id="hint2">One finger moves, two fingers scale and rotate, drag a corner to skew it into perspective.</div>
+  </div>
+  <!-- step 3 -->
+  <div id="s3" hidden>
+    <div class="row">
+      <div class="slider"><label for="op3">Opacity</label><input type="range" id="op3" min="5" max="100" value="50"><output id="op3v">50%</output></div>
+    </div>
+    <div class="row">
+      <button class="btn toggle" id="btnGrid3" aria-pressed="false">Grid</button>
+      <button class="btn toggle" id="btnLines3" aria-pressed="false">Lines</button>
+      <button class="btn toggle" id="btnFreeze" aria-pressed="false">Freeze</button>
+      <div class="grow"></div>
+      <button class="btn" id="btnBackAlign">← Align</button>
+      <button class="btn" id="btnResnap">Re-snap wall</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileWall" accept="image/*">
+<input type="file" id="fileMural" accept="image/*">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
+<script type="module">
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const stage = $('stage'), threeCanvas = $('three'), alignCanvas = $('align');
+const toastEl = $('toast'), statusEl = $('status');
+let toastT; const toast = (m, ms=4200) => { toastEl.textContent = m; toastEl.hidden = false; clearTimeout(toastT); toastT = setTimeout(()=>toastEl.hidden=true, ms); };
+const setStatus = (m, cls='') => { statusEl.hidden = !m; statusEl.textContent = m || ''; statusEl.className = cls; };
+
+// ---------- state ----------
+const S = {
+  step: 0,
+  wall: null,            // {img, w, h, url}
+  mural: null,           // {img, w, h, url}
+  quad: null,            // [[x,y] x4] TL,TR,BR,BL in wall px
+  opacity: .5, grid: false, lines: false, freeze: false,
+  target: null,          // ArrayBuffer compiled (all tiles learned so far)
+  tiles: null,           // [{ox,oy,w,h}] first = full wall
+  compiling: null,       // Promise
+  compileProgress: 0,
+  stream: null, video: null,
+  controller: null, tracking: false, locked: false,
+};
+const LS = { get(k){ try{return localStorage.getItem(k)}catch(e){return null} }, set(k,v){ try{localStorage.setItem(k,v)}catch(e){} }, del(k){ try{localStorage.removeItem(k)}catch(e){} } };
+
+// ---------- helpers ----------
+const loadImg = url => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+async function fileToImage(file, maxSide){
+  let bmp = null;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch(e) {}
+  let src = bmp;
+  if (!src) src = await loadImg(URL.createObjectURL(file));
+  const w = src.width, h = src.height, s = Math.min(1, maxSide / Math.max(w, h));
+  const c = document.createElement('canvas'); c.width = Math.round(w*s); c.height = Math.round(h*s);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return canvasToRec(c, file.type === 'image/png' || file.type === 'image/webp' ? 'image/png' : 'image/jpeg');
+}
+async function canvasToRec(c, type='image/jpeg'){
+  const url = c.toDataURL(type, .9);
+  const img = await loadImg(url);
+  return { img, w: c.width, h: c.height, url };
+}
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+function fmtPct(v){ return Math.round(v*100) + '%'; }
+
+// Projective map unit square -> quad (Heckbert)
+function homography(q){
+  const [[x0,y0],[x1,y1],[x2,y2],[x3,y3]] = q;
+  const sx = x0-x1+x2-x3, sy = y0-y1+y2-y3;
+  const dx1=x1-x2, dx2=x3-x2, dy1=y1-y2, dy2=y3-y2;
+  const den = dx1*dy2 - dx2*dy1 || 1e-9;
+  const g = (sx*dy2 - dx2*sy)/den, h = (dx1*sy - sx*dy1)/den;
+  const a = x1-x0+g*x1, b = x3-x0+h*x3, c = x0, d = y1-y0+g*y1, e = y3-y0+h*y3, f = y0;
+  return (u,v) => { const w = g*u + h*v + 1; return [(a*u+b*v+c)/w, (d*u+e*v+f)/w]; };
+}
+
+// Compose mural (+lines, +grid) into a texture canvas
+let composed = null, composedKey = '';
+function composeMural(){
+  if (!S.mural) return null;
+  const key = S.mural.url.length + '|' + S.grid + '|' + S.lines;
+  if (composed && composedKey === key) return composed;
+  const { img, w, h } = S.mural;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  if (S.lines) {
+    // Sobel edges -> white lines on transparent
+    const t = document.createElement('canvas'); t.width = w; t.height = h;
+    const tx = t.getContext('2d'); tx.drawImage(img, 0, 0);
+    const src = tx.getImageData(0,0,w,h).data, out = x.createImageData(w,h), o = out.data;
+    const g = new Float32Array(w*h);
+    for (let i=0;i<w*h;i++) g[i] = (src[i*4]*.299 + src[i*4+1]*.587 + src[i*4+2]*.114) * (src[i*4+3]/255);
+    for (let y=1;y<h-1;y++) for (let xx=1;xx<w-1;xx++){
+      const i = y*w+xx;
+      const gx = -g[i-w-1]-2*g[i-1]-g[i+w-1]+g[i-w+1]+2*g[i+1]+g[i+w+1];
+      const gy = -g[i-w-1]-2*g[i-w]-g[i-w+1]+g[i+w-1]+2*g[i+w]+g[i+w+1];
+      const m = Math.min(255, Math.hypot(gx,gy)*.6);
+      o[i*4]=255;o[i*4+1]=255;o[i*4+2]=255;o[i*4+3]= m>40 ? 255 : 0;
+    }
+    x.putImageData(out,0,0);
+  } else {
+    x.drawImage(img, 0, 0);
+  }
+  if (S.grid) {
+    x.strokeStyle = 'rgba(242,179,61,.95)'; x.lineWidth = Math.max(2, w/400);
+    x.setLineDash([]);
+    for (let i=1;i<4;i++){ x.beginPath(); x.moveTo(w*i/4,0); x.lineTo(w*i/4,h); x.stroke(); x.beginPath(); x.moveTo(0,h*i/4); x.lineTo(w,h*i/4); x.stroke(); }
+    x.strokeStyle = 'rgba(242,179,61,.95)'; x.lineWidth = Math.max(3, w/250); x.strokeRect(1,1,w-2,h-2);
+  }
+  composed = c; composedKey = key;
+  if (texture) { texture.image = c; texture.needsUpdate = true; }
+  return c;
+}
+
+// ---------- steps ----------
+function showStep(n){
+  S.step = n;
+  document.querySelectorAll('.step').forEach(el => { const k = +el.dataset.step; el.classList.toggle('on', k===n); el.classList.toggle('done', k<n); });
+  $('s1').hidden = n!==1; $('s2').hidden = n!==2; $('s3').hidden = n!==3;
+  $('welcome').hidden = n!==0; $('sheet').hidden = n===0; $('top').hidden = n===0;
+  $('shutter').style.display = n===1 && S.video ? 'block' : 'none';
+  alignCanvas.hidden = !(n===2 || (n===3 && S.freeze));
+  threeCanvas.style.visibility = n===3 && !S.freeze ? 'visible' : 'hidden';
+  if (S.video) S.video.style.visibility = (n===1 || (n===3 && !S.freeze)) ? 'visible' : 'hidden';
+  document.documentElement.style.setProperty('--sheet-h', $('sheet').offsetHeight + 'px');
+  if (n===3 && !S.freeze) startTracking(); else stopTracking();
+  if (n===2 || n===3) requestAlignDraw();
+  if (n!==3) setStatus('');
+  if (n===3) requestWakeLock();
+}
+
+// ---------- camera ----------
+async function openCamera(){
+  if (S.stream && S.stream.active) { await S.video.play().catch(()=>{}); return true; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:false, video:{ facingMode:{ ideal:'environment' }, width:{ ideal:1280 }, height:{ ideal:720 } } });
+    S.stream = stream;
+    if (!S.video) {
+      const v = document.createElement('video'); v.setAttribute('playsinline',''); v.muted = true; v.autoplay = true;
+      stage.insertBefore(v, threeCanvas); S.video = v;
+      v.addEventListener('loadedmetadata', () => { layoutVideo(); });
+    }
+    S.video.srcObject = stream;
+    await S.video.play();
+    await new Promise(r => S.video.videoWidth ? r() : S.video.addEventListener('loadedmetadata', r, { once:true }));
+    layoutVideo();
+    return true;
+  } catch (e) {
+    toast('Camera not available: ' + (e.message || e) + '. You can still use a photo of the wall.');
+    return false;
+  }
+}
+function layoutVideo(){
+  const v = S.video; if (!v || !v.videoWidth) return;
+  const W = stage.clientWidth, H = stage.clientHeight;
+  const va = v.videoWidth / v.videoHeight, ca = W / H;
+  let vw, vh; if (va > ca) { vh = H; vw = H*va; } else { vw = W; vh = W/va; }
+  Object.assign(v.style, { width: vw+'px', height: vh+'px', left: -(vw-W)/2+'px', top: -(vh-H)/2+'px' });
+  if (S.controller) setupCamera();
+}
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    if (S.video && (S.step===1 || S.step===3)) { if (!S.stream || !S.stream.active) { S.stream = null; await openCamera(); if (S.step===3) { stopTracking(); startTracking(); } } else S.video.play().catch(()=>{}); }
+    if (S.step===3) requestWakeLock();
+  }
+});
+
+// ---------- wall snapshot + compile ----------
+async function setWall(rec, {resnap=false} = {}){
+  S.wall = rec; S.target = null; S.compileProgress = 0;
+  LS.set('mg.wall', rec.url); idbDel('target');
+  compileWall();
+  if (!S.quad && S.mural) fitQuad();
+  showStep(2);
+  if (resnap) toast('New wall photo. Nudge the design if it moved, then Paint.', 5000);
+}
+async function snapWall(){
+  const v = S.video; if (!v || !v.videoWidth) return;
+  const s = Math.min(1, 960 / Math.max(v.videoWidth, v.videoHeight));
+  const c = document.createElement('canvas'); c.width = Math.round(v.videoWidth*s); c.height = Math.round(v.videoHeight*s);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  await setWall(await canvasToRec(c), { resnap: !!S.mural });
+}
+// Tiles: the full wall plus four overlapping quadrants, so tracking survives close-ups.
+function makeTiles(){
+  const { img, w, h } = S.wall, f = 0.62, tiles = [{ ox:0, oy:0, w, h }];
+  for (const [fx,fy] of [[0,0],[1,0],[0,1],[1,1]]) tiles.push({ ox: Math.round(fx*(1-f)*w), oy: Math.round(fy*(1-f)*h), w: Math.round(f*w), h: Math.round(f*h) });
+  return tiles.map(t => { const c = document.createElement('canvas'); c.width = t.w; c.height = t.h; c.getContext('2d').drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, t.w, t.h); return { ...t, canvas: c }; });
+}
+let compileGen = 0;
+function compileWall(){
+  const gen = ++compileGen;
+  const p = (async () => {
+    setCompileUI(0, 'wall');
+    const tiles = makeTiles();
+    const c1 = new MINDAR.IMAGE.Compiler();
+    await c1.compileImageTargets([tiles[0].canvas], pr => gen===compileGen && setCompileUI(pr/100*0.35, 'wall'));
+    if (gen!==compileGen) return;
+    const buf1 = await c1.exportData();
+    S.target = buf1; S.tiles = tiles.slice(0,1).map(({canvas,...t})=>t); setCompileUI(0.35, 'close');
+    if (S.step===3) { stopTracking(); startTracking(); }
+    const c2 = new MINDAR.IMAGE.Compiler();
+    await c2.compileImageTargets(tiles.slice(1).map(t=>t.canvas), pr => gen===compileGen && setCompileUI(0.35 + pr/100*0.65, 'close'));
+    if (gen!==compileGen) return;
+    const buf2 = await c2.exportData();
+    const m = new MINDAR.IMAGE.Compiler(); const a = m.importData(buf1), b = m.importData(buf2); m.data = [...a, ...b];
+    S.target = m.exportData(); S.tiles = tiles.map(({canvas,...t})=>t); setCompileUI(1, 'done');
+    idbSet('target', { buf: S.target, tiles: S.tiles, wallLen: S.wall.url.length }).catch(()=>{});
+    if (S.step===3) { stopTracking(); startTracking(); }
+    return S.target;
+  })();
+  S.compiling = p;
+  p.catch(e => { toast('Could not learn this wall photo: ' + (e.message||e)); setCompileUI(0,'wall'); });
+  return p;
+}
+function setCompileUI(f, phase){
+  S.compileProgress = f;
+  $('compileBar').style.width = (f*100).toFixed(0)+'%';
+  const note = $('brandNote'), pct = Math.round(f*100) + '%';
+  note.textContent = !S.wall ? 'wall tracker' : phase==='done' || f>=1 ? 'wall learned' : phase==='close' ? 'learning close-ups ' + pct : 'learning wall ' + pct;
+  $('btnToPaint').disabled = !(S.mural);
+  $('btnToPaint').textContent = S.mural && !S.target ? 'Paint (learning ' + pct + ')' : 'Paint →';
+}
+// IndexedDB for the learned wall (too big for localStorage)
+function idb(){ return new Promise((res, rej) => { const r = indexedDB.open('mural-ghost', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbSet(k, v){ const d = await idb(); return new Promise((res, rej) => { const t = d.transaction('kv','readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+async function idbGet(k){ const d = await idb(); return new Promise((res, rej) => { const r = d.transaction('kv').objectStore('kv').get(k); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbDel(k){ try { const d = await idb(); d.transaction('kv','readwrite').objectStore('kv').delete(k); } catch(e){} }
+
+// ---------- align editor ----------
+const actx = alignCanvas.getContext('2d');
+let fit = { s:1, ox:0, oy:0 }, drawReq = false, dpr = Math.min(2, window.devicePixelRatio||1);
+function requestAlignDraw(){ if (!drawReq) { drawReq = true; requestAnimationFrame(drawAlign); } }
+function computeFit(){
+  const W = stage.clientWidth, H = stage.clientHeight;
+  if (!S.wall) return;
+  const s = Math.min(W / S.wall.w, H / S.wall.h);
+  fit = { s, ox: (W - S.wall.w*s)/2, oy: (H - S.wall.h*s)/2 };
+}
+const toScreen = ([x,y]) => [fit.ox + x*fit.s, fit.oy + y*fit.s];
+const toWall = ([x,y]) => [(x-fit.ox)/fit.s, (y-fit.oy)/fit.s];
+function fitQuad(){
+  if (!S.wall || !S.mural) return;
+  const W = S.wall.w, H = S.wall.h, a = S.mural.w / S.mural.h;
+  let w = W*.8, h = w/a; if (h > H*.8) { h = H*.8; w = h*a; }
+  const x = (W-w)/2, y = (H-h)/2;
+  S.quad = [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
+  saveQuad(); requestAlignDraw(); updateMesh();
+}
+function saveQuad(){ if (S.quad) LS.set('mg.quad', JSON.stringify(S.quad)); }
+function drawAlign(){
+  drawReq = false;
+  const W = stage.clientWidth, H = stage.clientHeight;
+  if (alignCanvas.width !== Math.round(W*dpr) || alignCanvas.height !== Math.round(H*dpr)) { alignCanvas.width = Math.round(W*dpr); alignCanvas.height = Math.round(H*dpr); }
+  computeFit();
+  actx.setTransform(dpr,0,0,dpr,0,0);
+  actx.fillStyle = '#0E0F11'; actx.fillRect(0,0,W,H);
+  if (!S.wall) return;
+  actx.drawImage(S.wall.img, fit.ox, fit.oy, S.wall.w*fit.s, S.wall.h*fit.s);
+  const tex = composeMural();
+  if (tex && S.quad) {
+    actx.globalAlpha = S.opacity;
+    drawWarped(actx, tex, S.quad.map(toScreen));
+    actx.globalAlpha = 1;
+    if (!S.locked && S.step===2) {
+      const q = S.quad.map(toScreen);
+      actx.strokeStyle = 'rgba(242,179,61,.9)'; actx.lineWidth = 1.5; actx.setLineDash([6,5]);
+      actx.beginPath(); q.forEach((p,i)=> i?actx.lineTo(p[0],p[1]):actx.moveTo(p[0],p[1])); actx.closePath(); actx.stroke(); actx.setLineDash([]);
+      q.forEach(p => { actx.beginPath(); actx.arc(p[0],p[1],13,0,Math.PI*2); actx.fillStyle='rgba(14,15,17,.75)'; actx.fill(); actx.strokeStyle='#F2B33D'; actx.lineWidth=2.5; actx.stroke(); });
+    }
+  }
+}
+// draw image with projective warp using triangle subdivision
+function drawWarped(ctx, img, q){
+  const Hm = homography(q), N = 12, iw = img.width, ih = img.height;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++){
+    const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
+    const p00=Hm(u0,v0),p10=Hm(u1,v0),p11=Hm(u1,v1),p01=Hm(u0,v1);
+    tri(ctx,img,[u0*iw,v0*ih],[u1*iw,v0*ih],[u1*iw,v1*ih],p00,p10,p11);
+    tri(ctx,img,[u0*iw,v0*ih],[u1*iw,v1*ih],[u0*iw,v1*ih],p00,p11,p01);
+  }
+}
+function tri(ctx,img,s0,s1,s2,d0,d1,d2){
+  const [x0,y0]=s0,[x1,y1]=s1,[x2,y2]=s2,[u0,v0]=d0,[u1,v1]=d1,[u2,v2]=d2;
+  const det = (x1-x0)*(y2-y0)-(x2-x0)*(y1-y0); if (Math.abs(det)<1e-9) return;
+  const a=((u1-u0)*(y2-y0)-(u2-u0)*(y1-y0))/det, b=((v1-v0)*(y2-y0)-(v2-v0)*(y1-y0))/det;
+  const c=((u2-u0)*(x1-x0)-(u1-u0)*(x2-x0))/det, d=((v2-v0)*(x1-x0)-(v1-v0)*(x2-x0))/det;
+  const e=u0-a*x0-c*y0, f=v0-b*x0-d*y0;
+  ctx.save();
+  // expand clip slightly to hide seams
+  const cx=(u0+u1+u2)/3, cy=(v0+v1+v2)/3, ex=p=>[p[0]+(p[0]-cx)*.02+Math.sign(p[0]-cx)*.4, p[1]+(p[1]-cy)*.02+Math.sign(p[1]-cy)*.4];
+  const q0=ex(d0),q1=ex(d1),q2=ex(d2);
+  ctx.beginPath(); ctx.moveTo(q0[0],q0[1]); ctx.lineTo(q1[0],q1[1]); ctx.lineTo(q2[0],q2[1]); ctx.closePath(); ctx.clip();
+  ctx.transform(a,b,c,d,e,f); ctx.drawImage(img,0,0); ctx.restore();
+}
+// gestures
+const ptrs = new Map(); let gesture = null;
+alignCanvas.addEventListener('pointerdown', e => {
+  if (S.step!==2 || !S.quad || S.locked) return;
+  alignCanvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+  if (ptrs.size===1) {
+    const q = S.quad.map(toScreen);
+    let ci = -1, best = 30;
+    q.forEach((p,i)=>{ const d = Math.hypot(p[0]-e.clientX,p[1]-e.clientY); if (d<best){best=d;ci=i;} });
+    gesture = ci>=0 ? { type:'corner', i:ci } : { type:'move', start:[e.clientX,e.clientY], quad:S.quad.map(p=>[...p]) };
+  } else if (ptrs.size===2) {
+    const [a,b] = [...ptrs.values()];
+    gesture = { type:'pinch', a:[...a], b:[...b], quad:S.quad.map(p=>[...p]) };
+  }
+});
+alignCanvas.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId) || !gesture) return;
+  ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+  if (gesture.type==='corner') { S.quad[gesture.i] = toWall([e.clientX,e.clientY]); }
+  else if (gesture.type==='move' && ptrs.size===1) {
+    const dx=(e.clientX-gesture.start[0])/fit.s, dy=(e.clientY-gesture.start[1])/fit.s;
+    S.quad = gesture.quad.map(([x,y])=>[x+dx,y+dy]);
+  } else if (gesture.type==='pinch' && ptrs.size>=2) {
+    const [a,b] = [...ptrs.values()].slice(0,2);
+    const ang0 = Math.atan2(gesture.b[1]-gesture.a[1], gesture.b[0]-gesture.a[0]), ang1 = Math.atan2(b[1]-a[1], b[0]-a[0]);
+    const d0 = Math.hypot(gesture.b[0]-gesture.a[0], gesture.b[1]-gesture.a[1]) || 1, d1 = Math.hypot(b[0]-a[0], b[1]-a[1]);
+    const k = d1/d0, r = ang1-ang0, cos=Math.cos(r), sin=Math.sin(r);
+    const c0 = toWall([(gesture.a[0]+gesture.b[0])/2,(gesture.a[1]+gesture.b[1])/2]), c1 = toWall([(a[0]+b[0])/2,(a[1]+b[1])/2]);
+    S.quad = gesture.quad.map(([x,y])=>{ const px=x-c0[0], py=y-c0[1]; return [c1[0] + k*(px*cos-py*sin), c1[1] + k*(px*sin+py*cos)]; });
+  }
+  requestAlignDraw(); updateMesh();
+});
+const endPtr = e => { ptrs.delete(e.pointerId); if (ptrs.size===0) { gesture=null; saveQuad(); } else if (ptrs.size===1 && S.quad) { const [p]=[...ptrs.values()]; gesture={type:'move',start:[...p],quad:S.quad.map(q=>[...q])}; } };
+alignCanvas.addEventListener('pointerup', endPtr); alignCanvas.addEventListener('pointercancel', endPtr);
+alignCanvas.addEventListener('wheel', e => { if (S.step!==2||!S.quad) return; e.preventDefault(); const k = e.deltaY<0?1.03:0.97; const c = toWall([e.clientX,e.clientY]); S.quad = S.quad.map(([x,y])=>[c[0]+(x-c[0])*k, c[1]+(y-c[1])*k]); saveQuad(); requestAlignDraw(); updateMesh(); }, { passive:false });
+
+// ---------- three / tracking ----------
+let renderer, scene, camera, anchors = [], mesh = null, texture = null, rafId = null;
+function initThree(){
+  if (renderer) return;
+  renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha:true, antialias:true });
+  renderer.setPixelRatio(dpr);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera();
+  texture = new THREE.Texture(); texture.minFilter = THREE.LinearFilter;
+  mesh = { material: new THREE.MeshBasicMaterial({ map: texture, transparent:true, opacity:S.opacity, side:THREE.DoubleSide, depthTest:false, depthWrite:false }) };
+}
+function buildAnchors(){
+  anchors.forEach(a => scene.remove(a)); anchors = [];
+  (S.tiles || []).forEach(() => {
+    const g = new THREE.Group(); g.matrixAutoUpdate = false; g.visible = false;
+    g.add(new THREE.Mesh(new THREE.PlaneGeometry(1,1,24,24), mesh.material)); scene.add(g); anchors.push(g);
+  });
+  updateMesh();
+}
+function updateMesh(){
+  if (!S.quad || !S.wall || !anchors.length) return;
+  anchors.forEach((g, i) => {
+    const t = S.tiles[i];
+    const Hm = homography(S.quad.map(([x,y]) => [x - t.ox, t.h - (y - t.oy)]));   // tile coords: y up, origin bottom-left of the tile
+    const geo = g.children[0].geometry, pos = geo.attributes.position, uv = geo.attributes.uv;
+    for (let k=0;k<pos.count;k++){ const u = uv.getX(k), v = 1 - uv.getY(k); const [x,y] = Hm(u,v); pos.setXYZ(k, x, y, 0); }
+    pos.needsUpdate = true;
+  });
+}
+function setupCamera(){
+  if (!S.controller || !S.video) return;
+  const W = stage.clientWidth, H = stage.clientHeight, v = S.video, ctl = S.controller;
+  const proj = ctl.getProjectionMatrix(), inA = ctl.inputWidth/ctl.inputHeight, cA = W/H;
+  // replicate MindAR's resize: fov scaled by how much of the video height is visible
+  let visibleH; if (inA > cA) visibleH = H; else visibleH = W/ctl.inputWidth*ctl.inputHeight;
+  const g = H / visibleH;
+  camera.fov = 2*Math.atan(1/proj[5]*g)*180/Math.PI;
+  camera.near = proj[14]/(proj[10]-1); camera.far = proj[14]/(proj[10]+1);
+  camera.aspect = cA; camera.updateProjectionMatrix();
+  renderer.setSize(W, H, false); threeCanvas.style.width = W+'px'; threeCanvas.style.height = H+'px';
+}
+let lastSeen = 0;
+async function startTracking(){
+  if (S.tracking || S.freeze) return;
+  if (!S.wall || !S.mural) { showStep(S.wall ? 2 : 1); return; }
+  const ok = await openCamera(); if (!ok) { S.freeze = true; $('btnFreeze').setAttribute('aria-pressed','true'); showStep(3); return; }
+  if (!S.target) { setStatus('Learning the wall… ' + Math.round(S.compileProgress*100) + '%', 'warn'); try { await S.compiling; } catch(e) { return; } }
+  if (S.step!==3 || S.tracking) return;
+  initThree(); texture.image = composeMural(); texture.needsUpdate = true; mesh.material.opacity = S.opacity;
+  buildAnchors();
+  const v = S.video;
+  S.controller = new MINDAR.IMAGE.Controller({
+    inputWidth: v.videoWidth, inputHeight: v.videoHeight, maxTrack:1, warmupTolerance:2, missTolerance:8, filterMinCF:0.0005, filterBeta:0.02,
+    onUpdate: d => {
+      if (d.type!=='updateMatrix') return;
+      const g = anchors[d.targetIndex]; if (!g) return;
+      if (d.worldMatrix) { g.matrix.fromArray(d.worldMatrix); g.visible = true; lastSeen = performance.now(); setStatus((S.locked ? 'Locked' : 'Tracking') + (d.targetIndex ? ' · close-up' : ' · whole wall'), 'good'); }
+      else { g.visible = false; if (!anchors.some(a => a.visible)) setStatus(S.tiles.length>1 ? 'Looking for the wall…' : 'Looking for the wall — step back so more of it is in view', 'bad'); }
+    }
+  });
+  S.controller.addImageTargetsFromBuffer(S.target);
+  setupCamera();
+  setStatus('Warming up…', 'warn');
+  try { await S.controller.dummyRun(v); } catch(e) { toast('Tracker failed to start: ' + (e.message||e)); return; }
+  if (S.step!==3) return;
+  S.controller.processVideo(v); S.tracking = true;
+  setStatus('Looking for the wall…', 'warn');
+  const loop = () => { rafId = requestAnimationFrame(loop); renderer.render(scene, camera); };
+  loop();
+}
+function stopTracking(){
+  if (S.controller) { try { S.controller.stopProcessVideo(); S.controller.dispose && S.controller.dispose(); } catch(e){} S.controller = null; }
+  if (rafId) cancelAnimationFrame(rafId); rafId = null; S.tracking = false;
+  anchors.forEach(a => a.visible = false);
+  if (renderer) renderer.clear();
+}
+let wakeLock = null;
+async function requestWakeLock(){ try { if ('wakeLock' in navigator && document.visibilityState==='visible') wakeLock = await navigator.wakeLock.request('screen'); } catch(e){} }
+
+// ---------- wiring ----------
+$('btnStartCam').onclick = async () => { showStep(1); if (await openCamera()) showStep(1); };
+$('btnPickWall').onclick = $('btnPickWall2').onclick = () => $('fileWall').click();
+$('fileWall').onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value=''; try { await setWall(await fileToImage(f, 960), { resnap: !!S.mural }); } catch(err) { toast('Could not read that photo.'); } };
+$('shutter').onclick = snapWall;
+$('btnPickMural').onclick = () => $('fileMural').click();
+$('fileMural').onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value='';
+  try { S.mural = await fileToImage(f, 1600); composed=null; LS.set('mg.mural', S.mural.url); S.quad = null; fitQuad(); setCompileUI(S.compileProgress); if (texture) { texture.image = composeMural(); texture.needsUpdate = true; } } catch(err) { toast('Could not read that image.'); } };
+const bindOpacity = (r,o) => { r.value = Math.round(S.opacity*100); o.value = fmtPct(S.opacity); r.oninput = () => { S.opacity = r.value/100; LS.set('mg.opacity', S.opacity); $('op2').value = $('op3').value = r.value; $('op2v').value = $('op3v').value = fmtPct(S.opacity); if (mesh) mesh.material.opacity = S.opacity; requestAlignDraw(); }; };
+const bindToggle = (btns, key) => btns.forEach(b => b.onclick = () => { S[key] = !S[key]; btns.forEach(x => x.setAttribute('aria-pressed', S[key])); composed=null; composeMural(); requestAlignDraw(); });
+bindToggle([$('btnGrid2'),$('btnGrid3')], 'grid'); bindToggle([$('btnLines2'),$('btnLines3')], 'lines');
+$('btnFit').onclick = fitQuad;
+$('btnToPaint').onclick = () => { if (!S.mural) return toast('Choose your design first.'); showStep(3); };
+$('btnBackAlign').onclick = () => showStep(2);
+$('btnResnap').onclick = async () => { showStep(1); await openCamera(); showStep(1); };
+$('btnFreeze').onclick = () => { S.freeze = !S.freeze; $('btnFreeze').setAttribute('aria-pressed', S.freeze); S.locked = S.freeze; showStep(3); };
+$('btnReset').onclick = () => { if (!confirm('Start over? This forgets the wall photo, design and alignment.')) return; ['mg.wall','mg.mural','mg.quad','mg.opacity'].forEach(LS.del); idbDel('target'); setTimeout(()=>location.reload(), 150); };
+window.addEventListener('resize', () => { layoutVideo(); requestAlignDraw(); if (S.controller) setupCamera(); });
+window.addEventListener('orientationchange', () => setTimeout(()=>{ layoutVideo(); requestAlignDraw(); if (S.controller) setupCamera(); }, 300));
+
+// ---------- restore ----------
+(async () => {
+  bindOpacity($('op2'),$('op2v')); bindOpacity($('op3'),$('op3v'));
+  const op = parseFloat(LS.get('mg.opacity')); if (!isNaN(op)) { S.opacity = op; bindOpacity($('op2'),$('op2v')); bindOpacity($('op3'),$('op3v')); }
+  const wallURL = LS.get('mg.wall'), muralURL = LS.get('mg.mural'), quad = LS.get('mg.quad');
+  let tgt = null; try { tgt = await idbGet('target'); } catch(e) {}
+  if (wallURL) {
+    try {
+      const wi = await loadImg(wallURL); S.wall = { img: wi, w: wi.naturalWidth, h: wi.naturalHeight, url: wallURL };
+      if (muralURL) { const mi = await loadImg(muralURL); S.mural = { img: mi, w: mi.naturalWidth, h: mi.naturalHeight, url: muralURL }; }
+      if (quad) S.quad = JSON.parse(quad);
+      if (tgt && tgt.buf && tgt.tiles && tgt.wallLen === wallURL.length) { S.target = tgt.buf; S.tiles = tgt.tiles; S.compiling = Promise.resolve(S.target); setCompileUI(1, 'done'); } else compileWall();
+      const n = $('restoreNote'); n.hidden = false; n.innerHTML = 'Your last wall' + (S.mural ? ' and design are' : ' is') + ' still here. ';
+      const b = document.createElement('button'); b.className='btn'; b.textContent = S.mural ? 'Continue to Paint' : 'Continue to Align'; b.onclick = () => showStep(S.mural ? 3 : 2); n.appendChild(b);
+    } catch(e) { console.warn('restore failed', e); }
+  }
+  if (!window.isSecureContext) toast('Camera needs an https page. Open this page from its claude.ai link.');
+  showStep(0);
+})();
+})();
+</script>
+
+</body>
+</html>
