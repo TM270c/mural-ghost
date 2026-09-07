@@ -150,6 +150,9 @@ input[type=file]{display:none}
       <div class="slider"><label for="op3">Opacity</label><input type="range" id="op3" min="5" max="100" value="50"><output id="op3v">50%</output></div>
     </div>
     <div class="row">
+      <div class="slider"><label for="steady">Steady</label><input type="range" id="steady" min="0" max="100" value="60"><output id="steadyv">60%</output></div>
+    </div>
+    <div class="row">
       <button class="btn toggle" id="btnGrid3" aria-pressed="false">Grid</button>
       <button class="btn toggle" id="btnLines3" aria-pressed="false">Lines</button>
       <button class="btn toggle" id="btnFreeze" aria-pressed="false">Freeze</button>
@@ -182,7 +185,7 @@ const S = {
   wall: null,            // {img, w, h, url}
   mural: null,           // {img, w, h, url}
   quad: null,            // [[x,y] x4] TL,TR,BR,BL in wall px
-  opacity: .5, grid: false, lines: false, freeze: false,
+  opacity: .5, grid: false, lines: false, freeze: false, steady: .6,
   target: null,          // ArrayBuffer compiled (all tiles learned so far)
   tiles: null,           // [{ox,oy,w,h}] first = full wall
   compiling: null,       // Promise
@@ -526,6 +529,19 @@ function setupCamera(){
   renderer.setSize(W, H, false); threeCanvas.style.width = W+'px'; threeCanvas.style.height = H+'px';
 }
 let lastSeen = 0;
+// Adaptive smoothing: steady while you hold still, quick to follow when you really move.
+function smoothPose(g, m, ti){
+  const prev = g.userData.prev, tw = (S.tiles && S.tiles[ti]) ? S.tiles[ti].w * (S.tiles[ti].s||1) : 1000;
+  if (!prev || g.userData.ti !== ti) { g.userData.prev = m.slice(); g.userData.ti = ti; g.matrix.fromArray(m); return; }
+  // translation change relative to target size, plus rotation change
+  const dt = Math.hypot(m[12]-prev[12], m[13]-prev[13], m[14]-prev[14]) / tw;
+  const dr = Math.hypot(m[0]-prev[0], m[1]-prev[1], m[2]-prev[2], m[4]-prev[4], m[5]-prev[5], m[6]-prev[6]);
+  const motion = dt*6 + dr*4;                      // ~0 when still, ~1 when moving briskly
+  const base = 0.02 + (1 - S.steady) * 0.5;        // steady=1 → 0.02, steady=0 → 0.52
+  const a = Math.min(0.6, base + motion*motion*0.9);
+  for (let i=0;i<16;i++) prev[i] += (m[i] - prev[i]) * a;
+  g.matrix.fromArray(prev);
+}
 async function startTracking(){
   LOG('startTracking' + (S.tracking ? ' (already)' : '') + (S.freeze ? ' (freeze)' : '') + ' target=' + (S.target ? 'yes' : 'no') + ' tiles=' + (S.tiles ? S.tiles.length : 0));
   if (S.tracking || S.freeze) return;
@@ -538,14 +554,23 @@ async function startTracking(){
   buildAnchors();
   const v = S.video;
   S.controller = new MINDAR.IMAGE.Controller({
-    inputWidth: v.videoWidth, inputHeight: v.videoHeight, maxTrack:1, warmupTolerance:2, missTolerance:8, filterMinCF:0.0005, filterBeta:0.02,
+    inputWidth: v.videoWidth, inputHeight: v.videoHeight, maxTrack:1, warmupTolerance:3, missTolerance:25, filterMinCF:0.001, filterBeta:0.05,
     onUpdate: d => {
       if (d.type==='processDone') { DBG.frames++; return; }
       if (d.type!=='updateMatrix') return;
       DBG.updates++;
       const g = anchors[d.targetIndex]; if (!g) return;
-      if (d.worldMatrix) { g.matrix.fromArray(d.worldMatrix); g.visible = true; lastSeen = performance.now(); setStatus((S.locked ? 'Locked' : 'Tracking') + (d.targetIndex ? ' · close-up' : ' · whole wall'), 'good'); }
-      else { g.visible = false; if (!anchors.some(a => a.visible)) setStatus('Looking for the wall — stand at or behind the spot you took the photo from', 'bad'); }
+      if (d.worldMatrix) {
+        smoothPose(g, d.worldMatrix, d.targetIndex);
+        g.visible = true; g.userData.lostAt = 0; lastSeen = performance.now();
+        setStatus((S.locked ? 'Locked' : 'Tracking') + (d.targetIndex ? ' · close-up' : ' · whole wall'), 'good');
+      } else {
+        // hold the last pose briefly instead of blinking off
+        g.userData.lostAt = g.userData.lostAt || performance.now();
+        if (performance.now() - g.userData.lostAt > 1500) { g.visible = false; g.userData.prev = null; }
+        if (!anchors.some(a => a.visible)) setStatus('Looking for the wall — stand at or behind the spot you took the photo from', 'bad');
+        else setStatus('Holding last position…', 'warn');
+      }
     }
   });
   S.controller.addImageTargetsFromBuffer(S.target);
@@ -607,6 +632,8 @@ $('shutter').onclick = snapWall;
 $('btnPickMural').onclick = () => $('fileMural').click();
 $('fileMural').onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value='';
   try { S.mural = await fileToImage(f, 1600); composed=null; LS.set('mg.mural', S.mural.url); S.quad = null; fitQuad(); setCompileUI(S.compileProgress); if (texture) { texture.image = composeMural(); texture.needsUpdate = true; } } catch(err) { toast('Could not read that image.'); } };
+const st = $('steady'); st.value = Math.round(S.steady*100); $('steadyv').value = st.value + '%';
+st.oninput = () => { S.steady = st.value/100; $('steadyv').value = st.value + '%'; LS.set('mg.steady', S.steady); };
 const bindOpacity = (r,o) => { r.value = Math.round(S.opacity*100); o.value = fmtPct(S.opacity); r.oninput = () => { S.opacity = r.value/100; LS.set('mg.opacity', S.opacity); $('op2').value = $('op3').value = r.value; $('op2v').value = $('op3v').value = fmtPct(S.opacity); if (mesh) mesh.material.opacity = S.opacity; requestAlignDraw(); }; };
 const bindToggle = (btns, key) => btns.forEach(b => b.onclick = () => { S[key] = !S[key]; btns.forEach(x => x.setAttribute('aria-pressed', S[key])); composed=null; composeMural(); requestAlignDraw(); });
 bindToggle([$('btnGrid2'),$('btnGrid3')], 'grid'); bindToggle([$('btnLines2'),$('btnLines3')], 'lines');
@@ -615,13 +642,14 @@ $('btnToPaint').onclick = () => { if (!S.mural) return toast('Choose your design
 $('btnBackAlign').onclick = () => showStep(2);
 $('btnResnap').onclick = async () => { showStep(1); await openCamera(); showStep(1); };
 $('btnFreeze').onclick = () => { S.freeze = !S.freeze; $('btnFreeze').setAttribute('aria-pressed', S.freeze); S.locked = S.freeze; showStep(3); };
-$('btnReset').onclick = () => { if (!confirm('Start over? This forgets the wall photo, design and alignment.')) return; ['mg.wall','mg.mural','mg.quad','mg.opacity'].forEach(LS.del); idbDel('target'); setTimeout(()=>location.reload(), 150); };
+$('btnReset').onclick = () => { if (!confirm('Start over? This forgets the wall photo, design and alignment.')) return; ['mg.wall','mg.mural','mg.quad','mg.opacity','mg.steady'].forEach(LS.del); idbDel('target'); setTimeout(()=>location.reload(), 150); };
 window.addEventListener('resize', () => { layoutVideo(); requestAlignDraw(); if (S.controller) setupCamera(); });
 window.addEventListener('orientationchange', () => setTimeout(()=>{ layoutVideo(); requestAlignDraw(); if (S.controller) setupCamera(); }, 300));
 
 // ---------- restore ----------
 (async () => {
   bindOpacity($('op2'),$('op2v')); bindOpacity($('op3'),$('op3v'));
+  const stv = parseFloat(LS.get('mg.steady')); if (!isNaN(stv)) { S.steady = stv; $('steady').value = Math.round(stv*100); $('steadyv').value = Math.round(stv*100) + '%'; }
   const op = parseFloat(LS.get('mg.opacity')); if (!isNaN(op)) { S.opacity = op; bindOpacity($('op2'),$('op2v')); bindOpacity($('op3'),$('op3v')); }
   const wallURL = LS.get('mg.wall'), muralURL = LS.get('mg.mural'), quad = LS.get('mg.quad');
   let tgt = null; try { tgt = await idbGet('target'); } catch(e) {}
